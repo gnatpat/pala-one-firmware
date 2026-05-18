@@ -157,8 +157,11 @@ bool maybeRecoverFromIsrOverflow() {
 void IRAM_ATTR btnISR() {
   uint8_t next = (uint8_t)((s_btnQ.head + 1) % BTN_Q);
   if (next == s_btnQ.tail) {
-    s_btnQ.tail = (uint8_t)((s_btnQ.tail + 1) % BTN_Q);
+    // Queue full: drop the NEW event. Advancing tail from the ISR would
+    // race ButtonState::poll() (the only legitimate tail consumer) and
+    // deliver events out of order.
     s_btnQ.isrDropCount = s_btnQ.isrDropCount + 1;  // C++20 deprecates ++ on volatile
+    return;
   }
   s_btnQ.state[s_btnQ.head] = (digitalRead(BTN) == LOW);
   s_btnQ.timeMs[s_btnQ.head] = isrNowMs();
@@ -173,8 +176,10 @@ void injectButtonEdgeNow(bool pressed) {
   noInterrupts();
   uint8_t next = (uint8_t)((s_btnQ.head + 1) % BTN_Q);
   if (next == s_btnQ.tail) {
-    s_btnQ.tail = (uint8_t)((s_btnQ.tail + 1) % BTN_Q);
+    // Queue full: drop the NEW event (see btnISR for why).
     s_btnQ.isrDropCount = s_btnQ.isrDropCount + 1;  // C++20 deprecates ++ on volatile
+    interrupts();
+    return;
   }
   s_btnQ.state[s_btnQ.head] = pressed;
   s_btnQ.timeMs[s_btnQ.head] = isrNowMs();
