@@ -64,3 +64,25 @@ TEST_CASE("saveList replaces prior content") {
   CHECK_EQ(back.count, 1);
   CHECK_EQ(String(back.items[0].text), String("z"));
 }
+
+TEST_CASE("saveList skips the write when the stored bytes already match") {
+  MapKvStore kv;
+  ListData data;
+  data.count = 2;
+  std::strcpy(data.items[0].text, "alpha");
+  data.items[0].done = 0;
+  std::strcpy(data.items[1].text, "beta");
+  data.items[1].done = 1;
+
+  saveList(kv, data);
+  size_t writesBefore = kv.putBytesCallCount();
+
+  // Same content — must be a no-op (NVS flash-wear guard).
+  saveList(kv, data);
+  CHECK_EQ(kv.putBytesCallCount(), writesBefore);
+
+  // Real change — must write again.
+  data.items[0].done = 1;
+  saveList(kv, data);
+  CHECK(kv.putBytesCallCount() > writesBefore);
+}

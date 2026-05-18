@@ -34,7 +34,10 @@ public:
   void putBytes(const char* key, const void* buf, size_t len) override {
     auto& v = data_[key];
     v.assign((const uint8_t*)buf, (const uint8_t*)buf + len);
+    putBytesCalls_++;
   }
+
+  size_t putBytesCallCount() const { return putBytesCalls_; }
 
   String getString(const char* key, const String& def) override {
     auto it = strings_.find(key);
@@ -62,4 +65,5 @@ public:
 private:
   std::map<std::string, std::vector<uint8_t>> data_;
   std::map<std::string, std::string> strings_;
+  size_t putBytesCalls_ = 0;
 };
