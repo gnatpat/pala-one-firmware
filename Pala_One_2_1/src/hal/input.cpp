@@ -59,14 +59,19 @@ static ButtonQueue s_btnQ;
 //    tail) trio even if the ISR fires mid-drain.
 //
 //  Overflow policy:
-//    If the buffer is full when the ISR fires, the ISR drops the OLDEST
-//    entry (advances tail, increments s_btnQ.isrDropCount) and writes the new
-//    edge. Keeping recent edges matters more than keeping old ones — by the
-//    time you've buffered 64 unread events, the early ones are stale. The
-//    main loop watches s_btnQ.isrDropCount; once it crosses
+//    If the buffer is full when the ISR fires, the ISR drops the NEW edge
+//    (bumps s_btnQ.isrDropCount, returns without advancing head). Tail
+//    belongs to ButtonState::poll() and the ISR must not touch it — moving
+//    tail from an interrupt would race poll()'s read-then-advance and
+//    either deliver events out of order or corrupt the ring's invariants.
+//    The main loop watches s_btnQ.isrDropCount; once it crosses
 //    BTN_QUEUE_RECOVER_THRESHOLD (= 10) it calls clearButtonQueue() +
 //    g_btns.resetState() on the theory that something is wrong (stuck pin,
 //    bouncy contact) and the current click sequence is junk anyway.
+//    Dropping NEW edges is less ideal than dropping OLD ones (the user
+//    loses the most recent input), but the only safe place to drop old
+//    edges from is the consumer side; doing it from the producer was the
+//    race this fix removes.
 //
 //  IRAM_ATTR on btnISR: required so the ISR can execute even while the
 //  flash cache is invalidated (e.g., during a LittleFS write).
@@ -111,8 +116,8 @@ static ButtonQueue s_btnQ;
 //    button 70 times while it's drawing.
 //      Edges 1..63 fill the buffer.
 //      Edge 64 fills the last free slot (head wraps to one before tail).
-//      Edge 65 onward: the ISR sees buffer full -> advances tail (dropping
-//        the oldest queued edge), bumps s_btnQ.isrDropCount, writes the new edge.
+//      Edge 65 onward: the ISR sees buffer full -> bumps s_btnQ.isrDropCount
+//        and returns. Edges 1..64 stay in the buffer; new edges are lost.
 //    Redraw finishes; loop() iterates. It reads s_btnQ.isrDropCount, sees it >
 //    BTN_QUEUE_RECOVER_THRESHOLD, calls clearButtonQueue() + resetState().
 //    The mash is discarded; the next intentional press starts cleanly.
@@ -157,8 +162,11 @@ bool maybeRecoverFromIsrOverflow() {
 void IRAM_ATTR btnISR() {
   uint8_t next = (uint8_t)((s_btnQ.head + 1) % BTN_Q);
   if (next == s_btnQ.tail) {
-    s_btnQ.tail = (uint8_t)((s_btnQ.tail + 1) % BTN_Q);
+    // Queue full: drop the NEW event. Advancing tail from the ISR would
+    // race ButtonState::poll() (the only legitimate tail consumer) and
+    // deliver events out of order.
     s_btnQ.isrDropCount = s_btnQ.isrDropCount + 1;  // C++20 deprecates ++ on volatile
+    return;
   }
   s_btnQ.state[s_btnQ.head] = (digitalRead(BTN) == LOW);
   s_btnQ.timeMs[s_btnQ.head] = isrNowMs();
@@ -173,8 +181,10 @@ void injectButtonEdgeNow(bool pressed) {
   noInterrupts();
   uint8_t next = (uint8_t)((s_btnQ.head + 1) % BTN_Q);
   if (next == s_btnQ.tail) {
-    s_btnQ.tail = (uint8_t)((s_btnQ.tail + 1) % BTN_Q);
+    // Queue full: drop the NEW event (see btnISR for why).
     s_btnQ.isrDropCount = s_btnQ.isrDropCount + 1;  // C++20 deprecates ++ on volatile
+    interrupts();
+    return;
   }
   s_btnQ.state[s_btnQ.head] = pressed;
   s_btnQ.timeMs[s_btnQ.head] = isrNowMs();
