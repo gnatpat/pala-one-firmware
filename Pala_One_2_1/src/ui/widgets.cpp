@@ -15,7 +15,6 @@ void prepareMenuFrame() {
   bool doFull = (s_menuDrawsSinceFull >= MENU_FULL_REFRESH_EVERY);
   if (doFull) {
     display.fastmodeOff();
-    display.clear();
     s_menuDrawsSinceFull = 0;
   } else {
     display.fastmodeOn();
@@ -26,7 +25,6 @@ void prepareMenuFrame() {
 
 void drawCenter(const char* a, const char* b) {
   display.fastmodeOff();
-  display.clear();
   beginPageCanvas();
   Font::useBody();
 

@@ -40,7 +40,6 @@ uint32_t idleTimeoutMs()   { return (uint32_t)s_idleSecs * 1000UL; }
 // user-uploaded /sleep.bin first; falls back to the built-in icon.
 static void drawSleepScreen() {
   display.fastmodeOff();
-  display.clear();
   beginPageCanvas();
 
   File sf = FS.open("/sleep.bin", "r");

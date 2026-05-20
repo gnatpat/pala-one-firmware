@@ -263,7 +263,6 @@ void renderCurrentPage() {
   bool doFull = (g_bookview.cursor.pageTurnsSinceFull >= FULL_REFRESH_EVERY_N_PAGES);
   if (doFull) {
     display.fastmodeOff();
-    display.clear();
     g_bookview.cursor.pageTurnsSinceFull = 0;
   } else {
     display.fastmodeOn();
@@ -297,10 +296,6 @@ bool tryRestoreReadingSession() {
   int idx = bookIndexForPath(wp);
   if (idx < 0) return false;
   if (!openBookByIndex(idx)) return false;
-
-  // Force a full e-ink refresh on the first post-wake render — partial
-  // refresh would leave the sleep image showing through.
-  g_bookview.cursor.pageTurnsSinceFull = FULL_REFRESH_EVERY_N_PAGES;
   return true;
 }
 
