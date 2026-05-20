@@ -14,10 +14,18 @@ struct State {
   bool       credsReceived   = false;
   uint32_t   credsReceivedMs = 0;
   bool       ownsWifi        = false;  // true iff Improv brought Wi-Fi up to verify creds
+  uint32_t   lastHostByteMs  = 0;      // 0 = never; bumped whenever the host sends us bytes
 };
 
 State s_state;
 }  // namespace
+
+// How long after the last byte received from the host we still consider the
+// session "active" for the sleep gate. Just having the USB-CDC port open
+// isn't enough — a plugged-in laptop or `pio device monitor` shouldn't pin
+// the device awake. Long enough to cover a user reading the browser dialog
+// between sends; short enough that closing the tab lets sleep resume.
+static constexpr uint32_t kActiveAfterByteMs = 30000;
 
 // After the credentials callback fires we give the library this much time to
 // flush its "Provisioned" reply over USB-CDC before tearing Wi-Fi down. The
@@ -71,7 +79,16 @@ void notifyUploadSession(bool active) {
 }
 
 bool isActive() {
-  return static_cast<bool>(Serial);
+  if (!Serial) return false;
+  // Active during the brief window where we hold Wi-Fi for a provisioning,
+  // OR whenever the host has sent us bytes recently (= browser is actually
+  // talking to us, not just holding the port open).
+  if (s_state.ownsWifi) return true;
+  if (s_state.lastHostByteMs != 0
+      && (uint32_t)(millis() - s_state.lastHostByteMs) < kActiveAfterByteMs) {
+    return true;
+  }
+  return false;
 }
 
 void loop() {
@@ -79,7 +96,14 @@ void loop() {
     // Host disconnected. Drop anything we'd been holding.
     releaseWifi();
     clearGraceTimer();
+    s_state.lastHostByteMs = 0;
     return;
+  }
+
+  // Note recent activity *before* handleSerial drains the buffer, so the
+  // sleep gate keeps us awake for the next ~30s of dialog idle time.
+  if (Serial.available() > 0) {
+    s_state.lastHostByteMs = millis();
   }
 
   if (s_state.credsReceived
