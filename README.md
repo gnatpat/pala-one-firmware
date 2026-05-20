@@ -61,6 +61,27 @@ The same sources build under either toolchain.
 
 Both envs share libraries and partition table via `platformio.ini`. The PIO build also runs `scripts/build_info.py` to inject the current git short hash as `BUILD_GIT_HASH`; Arduino IDE builds fall back to `"unknown"`.
 
+### Installer site (local development)
+
+The [web installer](https://gnatpat.github.io/pala-one-firmware/) is rebuilt by CI on every tag push from `install/` + the latest firmware binaries. To iterate on the page (HTML, Improv Serial provisioning flow, manifest tweaks) locally:
+
+1. Build both envs at least once so the firmware bins exist:
+   ```
+   pio run -e wireless-paper-v1_1
+   pio run -e wireless-paper-v1_2
+   ```
+2. Assemble the bundle:
+   ```
+   python scripts/assemble_site.py
+   ```
+3. Serve it. Web Serial works on `localhost` without HTTPS, so a plain static server is enough:
+   ```
+   python -m http.server 8000 --directory site
+   ```
+4. Open <http://localhost:8000> in Chrome, Edge, or Opera.
+
+Both the script and CI write the same `site/` layout — what you test locally is bit-identical to what gets deployed. Optional flags: `--version <string>` to label the manifest, `--out <dir>` to write somewhere other than `site/`.
+
 ## Codebase layout
 
 ```

@@ -53,31 +53,12 @@ jobs:
       - name: Assemble site
         run: |
           set -euo pipefail
-          mkdir -p site
-          cp install/index.html site/
-
-          # bootloader / partitions / boot_app0 are byte-identical between the
-          # two envs (same chip, same partition table). Take them from the V1.2
-          # build dir; the V1.1 build produces the same bytes.
-          V12=.pio/build/wireless-paper-v1_2
-          V11=.pio/build/wireless-paper-v1_1
-          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32/tools/partitions -name boot_app0.bin | head -n1)
-
-          cp "$V12/bootloader.bin" site/bootloader.bin
-          cp "$V12/partitions.bin" site/partitions.bin
-          cp "$BOOT_APP0"          site/boot_app0.bin
-          cp "$V12/firmware.bin"   site/firmware-v1_2.bin
-          cp "$V11/firmware.bin"   site/firmware-v1_1.bin
-
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME}"
           else
             VERSION="dev-${GITHUB_SHA::7}"
           fi
-          jq --arg v "$VERSION" '.version = $v' install/manifest-v1_2.json > site/manifest-v1_2.json
-          jq --arg v "$VERSION" '.version = $v' install/manifest-v1_1.json > site/manifest-v1_1.json
-
-          ls -lh site
+          python scripts/assemble_site.py --version "$VERSION"
 
       - uses: actions/upload-pages-artifact@v3
         with:

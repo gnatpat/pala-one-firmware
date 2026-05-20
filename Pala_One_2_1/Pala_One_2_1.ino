@@ -59,6 +59,7 @@
 #include "src/state.h"
 #include "src/hal/battery.h"
 #include "src/hal/display.h"
+#include "src/hal/improv.h"
 #include "src/hal/input.h"
 #include "src/pure/hashing.h"
 #include "src/storage/app_catalog.h"
@@ -157,6 +158,11 @@ void setup() {
   // Drop to 80 MHz for normal operation — saves significant power.
   // Upload mode will raise it back to 240 MHz temporarily.
   setCpuFrequencyMhz(80);
+
+  // Improv Serial — once registered, Improv::loop() listens for browser-side
+  // provisioning whenever a host has the USB-CDC port open. No host = no
+  // listening = no battery cost. See src/hal/improv.h for the contract.
+  Improv::begin();
 }
 
 // ============================================================================
@@ -169,12 +175,16 @@ void loop() {
   ButtonEvent ev = ButtonEvent::fromButtonState(g_btns);
   if (ev.any()) markUserActivity();
 
-  if (ENABLE_DEEP_SLEEP && g_currentScreen->allowSleep()) {
+  if (ENABLE_DEEP_SLEEP
+      && g_currentScreen->allowSleep()
+      && !Improv::isActive()) {
     if (userIdleMs() > Sleep::idleTimeoutMs()) {
       Sleep::enter();
       return;
     }
   }
+
+  Improv::loop();   // no-op outside the boot / upload-screen windows
 
   g_currentScreen->onButton(ev);
   g_currentScreen->onIdleTick();
@@ -207,7 +217,8 @@ void loop() {
   // worst case under the bound below).
   if (g_currentScreen->allowSleep()
       && !g_btns.hasPendingClicks()
-      && !buttonQueueNonEmpty()) {
+      && !buttonQueueNonEmpty()
+      && !Improv::isActive()) {
     Sleep::idleLightSleep(Toast::isActive());
   }
 }
