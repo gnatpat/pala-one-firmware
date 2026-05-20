@@ -6,8 +6,47 @@
 #include "src/pure/text_util.h"
 #include "src/storage/fs_util.h"
 #include "src/storage/library.h"
-#include "src/ui/screens/upload_screen.h"   // singleton UploadState lives here
 #include "src/web/chrome.h"
+
+// ============================================================================
+//  Per-session state. File-static because the route handlers below are the
+//  only readers; the screen reaches it only through the reset functions.
+// ============================================================================
+namespace {
+struct BookUpload {
+  File   tmpFile;
+  String tmpPath;
+  String pendingUtf8Tail;
+  String finalName;
+  bool   ok = false;
+  String error;
+  // Cross-chunk state for streaming compactText() during upload, so a
+  // whitespace or newline run that spans a chunk boundary collapses
+  // correctly. Reset in UPLOAD_FILE_START. See pure/text_util.h.
+  bool   compactLastWasSpace = false;
+  int    compactNewlineCount = 0;
+};
+
+struct SleepUpload {
+  File   tmpFile;
+  String tmpPath;
+  bool   ok = false;
+  String error;
+};
+
+BookUpload  s_book;
+SleepUpload s_sleep;
+}  // namespace
+
+void resetBookUpload() {
+  if (s_book.tmpFile) s_book.tmpFile.close();
+  s_book = BookUpload{};
+}
+
+void resetSleepUpload() {
+  if (s_sleep.tmpFile) s_sleep.tmpFile.close();
+  s_sleep = SleepUpload{};
+}
 
 // ============================================================================
 //  Book upload
@@ -20,17 +59,17 @@
 // ============================================================================
 
 static void handleUploadDone() {
-  if (!UploadScreen::state().bookOk) {
+  if (!s_book.ok) {
     server.send(400, "text/plain; charset=utf-8",
-                UploadScreen::state().bookError.length()
-                  ? UploadScreen::state().bookError
+                s_book.error.length()
+                  ? s_book.error
                   : "Upload failed");
     return;
   }
 
   loadBooks();   // refresh after the stream handler appended the new book
 
-  String finalPath = "/books/" + UploadScreen::state().bookFinalName;
+  String finalPath = "/books/" + s_book.finalName;
   size_t storedSize = 0;
   File stored = FS.open(finalPath, "r");
   if (stored) {
@@ -42,7 +81,7 @@ static void handleUploadDone() {
   inner.reserve(1200);
   inner += "<div class='card'><h2>Upload complete</h2><p class='muted'>Your book is now stored on the device and available in the library.</p>";
   inner += "<div class='stats'>";
-  inner += "<div class='stat'><span class='muted'>Book</span><b>"        + htmlEscape(UploadScreen::state().bookFinalName) + "</b></div>";
+  inner += "<div class='stat'><span class='muted'>Book</span><b>"        + htmlEscape(s_book.finalName) + "</b></div>";
   inner += "<div class='stat'><span class='muted'>Stored size</span><b>" + humanBytes(storedSize)                          + "</b></div>";
   inner += "<div class='stat'><span class='muted'>Books now</span><b>"   + String(g_library.bookCount)                     + "</b></div>";
   inner += "<div class='stat'><span class='muted'>Free space</span><b>"  + humanBytes(fsFreeBytesSafe())                   + "</b></div>";
@@ -62,122 +101,122 @@ static void handleUploadBookStream() {
   HTTPUpload& up = server.upload();
 
   if (up.status == UPLOAD_FILE_START) {
-    UploadScreen::state().bookOk = false;
-    UploadScreen::state().bookError = "";
-    UploadScreen::state().bookFinalName = "";
-    UploadScreen::state().bookPendingUtf8Tail = "";
-    UploadScreen::state().bookTmpPath = "";
-    UploadScreen::state().bookCompactLastWasSpace = false;
-    UploadScreen::state().bookCompactNewlineCount = 0;
+    s_book.ok = false;
+    s_book.error = "";
+    s_book.finalName = "";
+    s_book.pendingUtf8Tail = "";
+    s_book.tmpPath = "";
+    s_book.compactLastWasSpace = false;
+    s_book.compactNewlineCount = 0;
 
     loadBooks();   // defensive — protects MAX_BOOKS check from a stale catalog
     if (g_library.bookCount >= MAX_BOOKS) {
-      UploadScreen::state().bookError = "Library full";
+      s_book.error = "Library full";
       return;
     }
 
     size_t freeBytes = fsFreeBytesSafe();
     if (freeBytes < 8192) {
-      UploadScreen::state().bookError = "Not enough free space";
+      s_book.error = "Not enough free space";
       return;
     }
 
     String clean = sanitizeUploadedFilename(up.filename);
-    UploadScreen::state().bookFinalName = clean;
-    UploadScreen::state().bookTmpPath   = "/books/" + clean + ".tmp";
+    s_book.finalName = clean;
+    s_book.tmpPath   = "/books/" + clean + ".tmp";
 
-    if (FS.exists(UploadScreen::state().bookTmpPath)) FS.remove(UploadScreen::state().bookTmpPath);
-    UploadScreen::state().bookTmpFile = FS.open(UploadScreen::state().bookTmpPath, "w");
-    if (!UploadScreen::state().bookTmpFile) {
-      UploadScreen::state().bookError = "Cannot create temp upload file";
-      UploadScreen::state().bookTmpPath = "";
+    if (FS.exists(s_book.tmpPath)) FS.remove(s_book.tmpPath);
+    s_book.tmpFile = FS.open(s_book.tmpPath, "w");
+    if (!s_book.tmpFile) {
+      s_book.error = "Cannot create temp upload file";
+      s_book.tmpPath = "";
     }
   }
   else if (up.status == UPLOAD_FILE_WRITE) {
-    if (UploadScreen::state().bookError.length() > 0) return;
-    if (UploadScreen::state().bookTmpFile && up.currentSize > 0) {
-      String chunk = UploadScreen::state().bookPendingUtf8Tail + String((const char*)up.buf, up.currentSize);
+    if (s_book.error.length() > 0) return;
+    if (s_book.tmpFile && up.currentSize > 0) {
+      String chunk = s_book.pendingUtf8Tail + String((const char*)up.buf, up.currentSize);
       int len = (int)chunk.length();
       if (len > 4) {
-        UploadScreen::state().bookPendingUtf8Tail = chunk.substring(len - 4);
+        s_book.pendingUtf8Tail = chunk.substring(len - 4);
         chunk = chunk.substring(0, len - 4);
       } else {
-        UploadScreen::state().bookPendingUtf8Tail = chunk;
+        s_book.pendingUtf8Tail = chunk;
         chunk = "";
       }
       if (chunk.length() > 0) {
         String cleaned = normalizeTypography(chunk);
         cleaned = compactText(cleaned,
-                              &UploadScreen::state().bookCompactLastWasSpace,
-                              &UploadScreen::state().bookCompactNewlineCount,
+                              &s_book.compactLastWasSpace,
+                              &s_book.compactNewlineCount,
                               /*trimTail=*/false);
         size_t cleanedLen = cleaned.length();
-        size_t wrote = UploadScreen::state().bookTmpFile.print(cleaned);
+        size_t wrote = s_book.tmpFile.print(cleaned);
         if (wrote != cleanedLen) {
           // Short write — out of space or FS error. Abort so a truncated
           // file isn't promoted to a finalized book.
-          UploadScreen::state().bookError = "Write failed (out of space?)";
-          UploadScreen::state().bookTmpFile.close();
-          if (UploadScreen::state().bookTmpPath.length() > 0
-              && FS.exists(UploadScreen::state().bookTmpPath)) {
-            FS.remove(UploadScreen::state().bookTmpPath);
+          s_book.error = "Write failed (out of space?)";
+          s_book.tmpFile.close();
+          if (s_book.tmpPath.length() > 0
+              && FS.exists(s_book.tmpPath)) {
+            FS.remove(s_book.tmpPath);
           }
         }
       }
     }
   }
   else if (up.status == UPLOAD_FILE_END) {
-    if (UploadScreen::state().bookError.length() > 0 && !UploadScreen::state().bookTmpFile) return;
-    if (UploadScreen::state().bookTmpFile) {
-      if (UploadScreen::state().bookPendingUtf8Tail.length() > 0) {
-        String cleaned = normalizeTypography(UploadScreen::state().bookPendingUtf8Tail);
+    if (s_book.error.length() > 0 && !s_book.tmpFile) return;
+    if (s_book.tmpFile) {
+      if (s_book.pendingUtf8Tail.length() > 0) {
+        String cleaned = normalizeTypography(s_book.pendingUtf8Tail);
         cleaned = compactText(cleaned,
-                              &UploadScreen::state().bookCompactLastWasSpace,
-                              &UploadScreen::state().bookCompactNewlineCount,
+                              &s_book.compactLastWasSpace,
+                              &s_book.compactNewlineCount,
                               /*trimTail=*/true);
         size_t cleanedLen = cleaned.length();
-        size_t wrote = UploadScreen::state().bookTmpFile.print(cleaned);
-        if (wrote != cleanedLen && UploadScreen::state().bookError.length() == 0) {
-          UploadScreen::state().bookError = "Write failed (out of space?)";
+        size_t wrote = s_book.tmpFile.print(cleaned);
+        if (wrote != cleanedLen && s_book.error.length() == 0) {
+          s_book.error = "Write failed (out of space?)";
         }
-        UploadScreen::state().bookPendingUtf8Tail = "";
+        s_book.pendingUtf8Tail = "";
       }
-      UploadScreen::state().bookTmpFile.close();
+      s_book.tmpFile.close();
 
-      if (UploadScreen::state().bookError.length() > 0) {
+      if (s_book.error.length() > 0) {
         // Short write or earlier error — never promote a truncated tmp file
         // to a finalized book.
-        if (UploadScreen::state().bookTmpPath.length() > 0
-            && FS.exists(UploadScreen::state().bookTmpPath)) {
-          FS.remove(UploadScreen::state().bookTmpPath);
+        if (s_book.tmpPath.length() > 0
+            && FS.exists(s_book.tmpPath)) {
+          FS.remove(s_book.tmpPath);
         }
-      } else if (UploadScreen::state().bookTmpPath.length() > 0 && up.totalSize > 0) {
-        String finalPath = UploadScreen::state().bookTmpPath.substring(0, UploadScreen::state().bookTmpPath.length() - 4);
+      } else if (s_book.tmpPath.length() > 0 && up.totalSize > 0) {
+        String finalPath = s_book.tmpPath.substring(0, s_book.tmpPath.length() - 4);
         if (FS.exists(finalPath)) FS.remove(finalPath);
-        if (FS.rename(UploadScreen::state().bookTmpPath, finalPath)) {
-          UploadScreen::state().bookOk = true;
+        if (FS.rename(s_book.tmpPath, finalPath)) {
+          s_book.ok = true;
         } else {
-          if (FS.exists(UploadScreen::state().bookTmpPath)) FS.remove(UploadScreen::state().bookTmpPath);
-          UploadScreen::state().bookError = "Failed to finalize upload";
+          if (FS.exists(s_book.tmpPath)) FS.remove(s_book.tmpPath);
+          s_book.error = "Failed to finalize upload";
         }
       } else {
-        if (UploadScreen::state().bookTmpPath.length() > 0 && FS.exists(UploadScreen::state().bookTmpPath)) FS.remove(UploadScreen::state().bookTmpPath);
-        UploadScreen::state().bookError = "Empty upload";
+        if (s_book.tmpPath.length() > 0 && FS.exists(s_book.tmpPath)) FS.remove(s_book.tmpPath);
+        s_book.error = "Empty upload";
       }
-      UploadScreen::state().bookTmpPath = "";
+      s_book.tmpPath = "";
     } else {
-      if (UploadScreen::state().bookTmpPath.length() > 0 && FS.exists(UploadScreen::state().bookTmpPath)) FS.remove(UploadScreen::state().bookTmpPath);
-      if (UploadScreen::state().bookError.length() == 0) UploadScreen::state().bookError = "Upload failed";
-      UploadScreen::state().bookTmpPath = "";
+      if (s_book.tmpPath.length() > 0 && FS.exists(s_book.tmpPath)) FS.remove(s_book.tmpPath);
+      if (s_book.error.length() == 0) s_book.error = "Upload failed";
+      s_book.tmpPath = "";
     }
   }
   else if (up.status == UPLOAD_FILE_ABORTED) {
-    if (UploadScreen::state().bookTmpFile) UploadScreen::state().bookTmpFile.close();
-    if (UploadScreen::state().bookTmpPath.length() > 0 && FS.exists(UploadScreen::state().bookTmpPath)) FS.remove(UploadScreen::state().bookTmpPath);
-    UploadScreen::state().bookPendingUtf8Tail = "";
-    UploadScreen::state().bookTmpPath = "";
-    UploadScreen::state().bookOk = false;
-    UploadScreen::state().bookError = "Upload aborted";
+    if (s_book.tmpFile) s_book.tmpFile.close();
+    if (s_book.tmpPath.length() > 0 && FS.exists(s_book.tmpPath)) FS.remove(s_book.tmpPath);
+    s_book.pendingUtf8Tail = "";
+    s_book.tmpPath = "";
+    s_book.ok = false;
+    s_book.error = "Upload aborted";
   }
 }
 
@@ -186,10 +225,10 @@ static void handleUploadBookStream() {
 // ============================================================================
 
 static void handleUploadSleepDone() {
-  if (!UploadScreen::state().sleepOk) {
+  if (!s_sleep.ok) {
     server.send(400, "text/plain; charset=utf-8",
-                UploadScreen::state().sleepError.length()
-                  ? UploadScreen::state().sleepError
+                s_sleep.error.length()
+                  ? s_sleep.error
                   : "Sleep image upload failed");
     return;
   }
@@ -211,42 +250,42 @@ static void handleUploadSleepStream() {
   HTTPUpload& upS = server.upload();
 
   if (upS.status == UPLOAD_FILE_START) {
-    UploadScreen::state().sleepOk = false;
-    UploadScreen::state().sleepError = "";
-    UploadScreen::state().sleepTmpPath = "/sleep.bin.tmp";
-    if (FS.exists(UploadScreen::state().sleepTmpPath)) FS.remove(UploadScreen::state().sleepTmpPath);
-    UploadScreen::state().sleepTmpFile = FS.open(UploadScreen::state().sleepTmpPath, "w");
-    if (!UploadScreen::state().sleepTmpFile) UploadScreen::state().sleepError = "Cannot create temp sleep file";
+    s_sleep.ok = false;
+    s_sleep.error = "";
+    s_sleep.tmpPath = "/sleep.bin.tmp";
+    if (FS.exists(s_sleep.tmpPath)) FS.remove(s_sleep.tmpPath);
+    s_sleep.tmpFile = FS.open(s_sleep.tmpPath, "w");
+    if (!s_sleep.tmpFile) s_sleep.error = "Cannot create temp sleep file";
   }
   else if (upS.status == UPLOAD_FILE_WRITE) {
-    if (UploadScreen::state().sleepTmpFile) UploadScreen::state().sleepTmpFile.write(upS.buf, upS.currentSize);
+    if (s_sleep.tmpFile) s_sleep.tmpFile.write(upS.buf, upS.currentSize);
   }
   else if (upS.status == UPLOAD_FILE_END) {
-    if (UploadScreen::state().sleepTmpFile) UploadScreen::state().sleepTmpFile.close();
-    File f = FS.open(UploadScreen::state().sleepTmpPath, "r");
+    if (s_sleep.tmpFile) s_sleep.tmpFile.close();
+    File f = FS.open(s_sleep.tmpPath, "r");
     size_t sz = f ? f.size() : 0;
     if (f) f.close();
 
     if (sz != 3904) {
-      if (FS.exists(UploadScreen::state().sleepTmpPath)) FS.remove(UploadScreen::state().sleepTmpPath);
-      UploadScreen::state().sleepError = "Sleep image must be exactly 3904 bytes";
-      UploadScreen::state().sleepOk = false;
+      if (FS.exists(s_sleep.tmpPath)) FS.remove(s_sleep.tmpPath);
+      s_sleep.error = "Sleep image must be exactly 3904 bytes";
+      s_sleep.ok = false;
     } else {
       if (FS.exists("/sleep.bin")) FS.remove("/sleep.bin");
-      if (FS.rename(UploadScreen::state().sleepTmpPath, "/sleep.bin")) UploadScreen::state().sleepOk = true;
+      if (FS.rename(s_sleep.tmpPath, "/sleep.bin")) s_sleep.ok = true;
       else {
-        if (FS.exists(UploadScreen::state().sleepTmpPath)) FS.remove(UploadScreen::state().sleepTmpPath);
-        UploadScreen::state().sleepError = "Failed to save sleep image";
+        if (FS.exists(s_sleep.tmpPath)) FS.remove(s_sleep.tmpPath);
+        s_sleep.error = "Failed to save sleep image";
       }
     }
-    UploadScreen::state().sleepTmpPath = "";
+    s_sleep.tmpPath = "";
   }
   else if (upS.status == UPLOAD_FILE_ABORTED) {
-    if (UploadScreen::state().sleepTmpFile) UploadScreen::state().sleepTmpFile.close();
-    if (UploadScreen::state().sleepTmpPath.length() > 0 && FS.exists(UploadScreen::state().sleepTmpPath)) FS.remove(UploadScreen::state().sleepTmpPath);
-    UploadScreen::state().sleepError = "Sleep image upload aborted";
-    UploadScreen::state().sleepOk = false;
-    UploadScreen::state().sleepTmpPath = "";
+    if (s_sleep.tmpFile) s_sleep.tmpFile.close();
+    if (s_sleep.tmpPath.length() > 0 && FS.exists(s_sleep.tmpPath)) FS.remove(s_sleep.tmpPath);
+    s_sleep.error = "Sleep image upload aborted";
+    s_sleep.ok = false;
+    s_sleep.tmpPath = "";
   }
 }
 

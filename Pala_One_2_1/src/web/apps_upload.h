@@ -9,4 +9,9 @@
 // Call once from registerWebRoutes().
 void registerAppUploadRoutes();
 
+// Close any open tmp file and clear all per-session fields. Called by the
+// upload screen at session start/stop. Storage lives file-static inside
+// apps_upload.cpp.
+void resetAppUpload();
+
 #endif  // PALA_WEB_APPS_UPLOAD_H
