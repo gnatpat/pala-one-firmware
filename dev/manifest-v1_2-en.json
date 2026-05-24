@@ -1,6 +1,6 @@
 {
   "name": "Pala One (V1.2 display, English)",
-  "version": "dev-fda0fc0",
+  "version": "dev-02c31cf",
   "new_install_skip_erase": true,
   "builds": [
     {
