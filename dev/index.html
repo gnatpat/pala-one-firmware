@@ -9,7 +9,12 @@
     src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
   ></script>
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light dark;
+      --accent: #4a90e2;
+      --accent-hover: #357abd;
+      --accent-dark: #5fa3f0;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       max-width: 640px;
@@ -19,6 +24,10 @@
     }
     h1 { margin-bottom: 0.25rem; }
     .sub { color: #666; margin-top: 0; }
+    /* "switch channel" link lives in the channel-bar; hidden in local-dev
+       mode (body.channel-local) because "../" doesn't go anywhere sensible. */
+    body.channel-local .switch-channel { display: none; }
+
     .channel-bar {
       display: flex;
       align-items: center;
@@ -39,12 +48,7 @@
     .channel-badge.stable { background: #d8efd9; color: #1f6b25; }
     .channel-badge.dev,
     .channel-badge.local  { background: #fde6c8; color: #8a4a07; }
-    @media (prefers-color-scheme: dark) {
-      .channel-bar { color: #aaa; }
-      .channel-badge.stable { background: #1f3a22; color: #9bd6a1; }
-      .channel-badge.dev,
-      .channel-badge.local  { background: #3a2a14; color: #f0c089; }
-    }
+
     .variant {
       border: 1px solid rgba(127,127,127,0.3);
       border-radius: 8px;
@@ -56,10 +60,31 @@
     .lang-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.75rem;
+      gap: 0.6rem;
       align-items: center;
     }
     .lang-row esp-web-install-button { display: inline-block; }
+
+    /* Style the buttons that sit inside <esp-web-install-button slot="activate">. */
+    .lang-row button {
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.875rem;
+      padding: 0.4rem 0.85rem;
+      border-radius: 6px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.05s;
+    }
+    .lang-row button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .lang-row button:active { transform: translateY(1px); }
+    .lang-row button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
     .note {
       background: #fff8c5;
       border: 1px solid #e6dba0;
@@ -67,25 +92,35 @@
       padding: 0.75rem 1rem;
       font-size: 0.95rem;
     }
-    @media (prefers-color-scheme: dark) {
-      .note { background: #2a2a1a; border-color: #5a5a3a; }
-      .variant p { color: #aaa; }
-    }
     code {
       background: rgba(127,127,127,0.15);
       padding: 0.1em 0.35em;
       border-radius: 3px;
     }
     ol li { margin: 0.4rem 0; }
+
+    @media (prefers-color-scheme: dark) {
+      .sub, .variant p, .channel-bar { color: #aaa; }
+      .note { background: #2a2a1a; border-color: #5a5a3a; }
+      .channel-badge.stable { background: #1f3a22; color: #9bd6a1; }
+      .channel-badge.dev,
+      .channel-badge.local  { background: #3a2a14; color: #f0c089; }
+      .lang-row button { border-color: var(--accent); background: var(--accent); }
+      .lang-row button:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+    }
+
+    @media (max-width: 480px) {
+      body { margin: 3rem auto 2rem; }
+    }
   </style>
 </head>
-<body>
+<body class="channel-dev">
   <h1>Pala One Installer</h1>
   <p class="sub">Flash the firmware directly from your browser.</p>
   <div class="channel-bar">
     <span class="channel-badge dev">dev</span>
-    <span>build: <code>dev-d4b5bf1</code></span>
-    <a href="../">switch channel</a>
+    <span>build: <code>dev-f63f1fe</code></span>
+    <a class="switch-channel" href="../">switch channel</a>
   </div>
 
   <div class="variant">
@@ -132,7 +167,7 @@
 
   <h2>Before you click install</h2>
   <ol>
-    <li>Use a desktop browser: <strong>Chrome, Edge, or Opera</strong>. Safari, Firefox, and mobile browsers won't work.</li>
+    <li>Use a desktop browser: <strong>Chrome, Edge, or Opera</strong>. Other browsers (e.g. Safari, Firefox, and mobile browsers) won't work.</li>
     <li>Plug the board into your computer with a USB-C cable that supports data (not power-only).</li>
     <li>Click the install button for your board, pick the serial port, then choose <strong>Install</strong>.</li>
   </ol>
