@@ -53,6 +53,13 @@
     }
     .variant h3 { margin: 0 0 0.25rem; }
     .variant p { margin: 0.25rem 0 0.75rem; color: #666; }
+    .lang-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+    }
+    .lang-row esp-web-install-button { display: inline-block; }
     .note {
       background: #fff8c5;
       border: 1px solid #e6dba0;
@@ -77,32 +84,50 @@
   <p class="sub">Flash the firmware directly from your browser.</p>
   <div class="channel-bar">
     <span class="channel-badge dev">dev</span>
-    <span>build: <code>dev-14db7f7</code></span>
+    <span>build: <code>dev-6205601</code></span>
     <a href="../">switch channel</a>
   </div>
 
   <div class="variant">
     <h3>V1.2 board</h3>
     <p>Newer Heltec Wireless Paper. If your board's silkscreen says <code>V1.2</code>, pick this.</p>
-    <esp-web-install-button manifest="manifest-v1_2.json">
-      <button slot="activate">Install V1.2</button>
-      <span slot="unsupported">
-        Your browser doesn't support Web Serial. Use desktop Chrome, Edge, or Opera.
-      </span>
-      <span slot="not-allowed">Open this page over HTTPS.</span>
-    </esp-web-install-button>
+    <div class="lang-row">
+      <esp-web-install-button manifest="manifest-v1_2-en.json">
+        <button slot="activate">Install V1.2 — English</button>
+        <span slot="unsupported">
+          Your browser doesn't support Web Serial. Use desktop Chrome, Edge, or Opera.
+        </span>
+        <span slot="not-allowed">Open this page over HTTPS.</span>
+      </esp-web-install-button>
+      <esp-web-install-button manifest="manifest-v1_2-es.json">
+        <button slot="activate">Install V1.2 — Español</button>
+        <span slot="unsupported">
+          Your browser doesn't support Web Serial. Use desktop Chrome, Edge, or Opera.
+        </span>
+        <span slot="not-allowed">Open this page over HTTPS.</span>
+      </esp-web-install-button>
+    </div>
   </div>
 
   <div class="variant">
     <h3>V1.1 board</h3>
     <p>Older revision of the Heltec Wireless Paper.</p>
-    <esp-web-install-button manifest="manifest-v1_1.json">
-      <button slot="activate">Install V1.1</button>
-      <span slot="unsupported">
-        Your browser doesn't support Web Serial. Use desktop Chrome, Edge, or Opera.
-      </span>
-      <span slot="not-allowed">Open this page over HTTPS.</span>
-    </esp-web-install-button>
+    <div class="lang-row">
+      <esp-web-install-button manifest="manifest-v1_1-en.json">
+        <button slot="activate">Install V1.1 — English</button>
+        <span slot="unsupported">
+          Your browser doesn't support Web Serial. Use desktop Chrome, Edge, or Opera.
+        </span>
+        <span slot="not-allowed">Open this page over HTTPS.</span>
+      </esp-web-install-button>
+      <esp-web-install-button manifest="manifest-v1_1-es.json">
+        <button slot="activate">Install V1.1 — Español</button>
+        <span slot="unsupported">
+          Your browser doesn't support Web Serial. Use desktop Chrome, Edge, or Opera.
+        </span>
+        <span slot="not-allowed">Open this page over HTTPS.</span>
+      </esp-web-install-button>
+    </div>
   </div>
 
   <h2>Before you click install</h2>
