@@ -9,6 +9,7 @@
 #include "src/storage/statistics.h"         // Statistics::onReaderPageTurn
 
 #include "src/ui/font.h"                    // layoutForCache for cache stamping
+#include "src/ui/idle_paginator.h"          // saveLastOpenedBook
 #include "src/ui/screens/library_screen.h"  // navigateToLibraryRoot — fallback on error
 #include "src/ui/statusbar.h"               // Statusbar::mode for the per-mode statusbar render
 #include "src/ui/text.h"
@@ -190,6 +191,10 @@ bool openBookByIndex(int idx) {
 
   String path(p);
   if (!g_bookview.book.open(path)) return false;
+
+  // Tell the idle paginator which book to pre-paginate the next time the
+  // user changes a layout-affecting setting from the web UI.
+  IdlePaginator::saveLastOpenedBook(path);
 
   g_bookview.pages.count = 1;
   g_bookview.pages.offsets[0] = 0;

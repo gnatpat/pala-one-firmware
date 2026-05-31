@@ -87,6 +87,7 @@
 #include "src/storage/page_cache.h"
 #include "src/storage/statistics.h"
 #include "src/ui/font.h"
+#include "src/ui/idle_paginator.h"
 #include "src/ui/pala_api_impl.h"
 #include "src/ui/reader.h"
 #include "src/ui/reader_actions.h"  // Gestures::loadSettings
@@ -345,6 +346,23 @@ void loop() {
     g_currentScreen->onEnter();
   }
 
+  // Background pagination for the most-recently-opened book. Self-gating
+  // (no work if reader is active or no recent book registered), so this
+  // is a sub-millisecond no-op in the steady state. When there *is* work
+  // — typically right after a layout-affecting settings change — we skip
+  // light sleep this iteration so the next loop's tick can keep making
+  // progress at CPU speed.
+  //
+  // 200 ms budget: button latency stays bounded by ONE page's pagination
+  // cost (~10-30 ms even at 80 MHz) because the inner loop checks
+  // `buttonQueueNonEmpty()` every page — `budgetMs` only sets the max
+  // time without input. Bigger budget amortises LittleFS open overhead
+  // (~3-5 ms per cache append) across more useful work per tick. Other
+  // main-loop responsibilities (deep-sleep gate, toast expiry, screen
+  // onIdleTick) tolerate up-to-budget delays at this scale; e-ink redraw
+  // already dwarfs them.
+  bool paginatorDidWork = IdlePaginator::tick(200);
+
   // Light-sleep idle gating. The single biggest battery saver while reading:
   // between page turns the loop has nothing to do, so we drop the CPU until
   // either the button is pressed or a short timer fires for housekeeping.
@@ -365,7 +383,8 @@ void loop() {
   if (g_currentScreen->allowSleep()
       && !g_btns.hasPendingClicks()
       && !buttonQueueNonEmpty()
-      && !WifiProvisioning::isActive()) {
+      && !WifiProvisioning::isActive()
+      && !paginatorDidWork) {
     Sleep::idleLightSleep(Toast::isActive());
   }
 }

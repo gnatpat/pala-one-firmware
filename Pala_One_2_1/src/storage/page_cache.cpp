@@ -51,15 +51,24 @@ static String pageCachePathForBook(const String& path) {
   return String("/pc_") + prefKeyForBook(path) + ".bin";
 }
 
-// Open the cache file for `path`, read + validate the header (magic, layout
-// stamp, expected source-file size, non-zero entry count), and return it
-// positioned just past the header. On false, any opened file is closed and
-// `outFile` / `outCount` are left untouched. Both load functions share this
-// gate; only the work that follows differs.
-static bool openAndValidateCache(const String& path, size_t expectedSize,
-                                 const PageCacheLayout& layout,
-                                 File& outFile, uint16_t& outCount) {
-  File f = FS.open(pageCachePathForBook(path), "r");
+// Open the cache file for `path`, read the header (magic, layout stamp,
+// stored file size, count), validate magic + layout + non-zero count, and
+// return the file positioned just past the header along with the stored
+// fileSize and count. On false, any opened file is closed and out-params
+// are left untouched. `mode` is the LittleFS open mode — "r" for read-only
+// loaders, "r+" for in-place append.
+//
+// fileSize is reported back rather than checked here; almost every caller
+// then wants to enforce a size match against an expected value, which
+// `openAndValidateCache` does in one step. The raw form exists only for
+// `readCacheProgress`, which deliberately probes the header before the
+// book file is open (and therefore can't yet know the actual book size).
+static bool openCacheAndReadHeader(const String& path, const char* mode,
+                                   const PageCacheLayout& layout,
+                                   File& outFile,
+                                   uint32_t& outStoredFileSize,
+                                   uint16_t& outCount) {
+  File f = FS.open(pageCachePathForBook(path), mode);
   if (!f) return false;
 
   uint32_t magic = 0;
@@ -74,14 +83,34 @@ static bool openAndValidateCache(const String& path, size_t expectedSize,
 
   if (magic != kPageCacheMagic
       || layoutVersion != encodeLayoutVersion(layout)
-      || fileSize != (uint32_t)expectedSize
       || count == 0) {
     f.close();
     return false;
   }
 
-  outFile = f;
-  outCount = count;
+  outFile           = f;
+  outStoredFileSize = fileSize;
+  outCount          = count;
+  return true;
+}
+
+// Same as `openCacheAndReadHeader`, but also enforces that the cache's
+// stored fileSize matches `expectedSize` and hides the value from the
+// caller — so a function that asks for a validated cache cannot forget
+// the fileSize check. Used by every read/write path that has the book
+// (or expects one of a known size) open. Closes the file on mismatch.
+static bool openAndValidateCache(const String& path, const char* mode,
+                               size_t expectedSize,
+                               const PageCacheLayout& layout,
+                               File& outFile, uint16_t& outCount) {
+  uint32_t storedFileSize = 0;
+  if (!openCacheAndReadHeader(path, mode, layout, outFile, storedFileSize, outCount)) {
+    return false;
+  }
+  if (storedFileSize != (uint32_t)expectedSize) {
+    outFile.close();
+    return false;
+  }
   return true;
 }
 
@@ -90,7 +119,7 @@ bool loadPageOffsetCacheForBook(const String& path, size_t expectedSize,
                                 PageOffsetTable& out) {
   File f;
   uint16_t count = 0;
-  if (!openAndValidateCache(path, expectedSize, layout, f, count)) return false;
+  if (!openAndValidateCache(path, "r", expectedSize, layout, f, count)) return false;
   if (count > MAX_PAGES) { f.close(); return false; }
 
   int loaded = 0;
@@ -107,10 +136,10 @@ bool loadPageOffsetCacheForBook(const String& path, size_t expectedSize,
   return true;
 }
 
-void savePageOffsetCacheForBook(const String& path, size_t fileSize,
-                                const PageCacheLayout& layout,
-                                const PageOffsetTable& in) {
-  if (in.count <= 1) return;
+void writeFreshCache(const String& path, size_t fileSize,
+                     const PageCacheLayout& layout,
+                     const uint32_t* offsets, uint16_t n) {
+  if (n == 0) return;
 
   File f = FS.open(pageCachePathForBook(path), "w");
   if (!f) return;
@@ -118,14 +147,56 @@ void savePageOffsetCacheForBook(const String& path, size_t fileSize,
   uint32_t magic = kPageCacheMagic;
   uint32_t layoutVersion = encodeLayoutVersion(layout);
   uint32_t size32 = (uint32_t)fileSize;
-  uint16_t count16 = (uint16_t)min(in.count, MAX_PAGES);
+  uint16_t count16 = (uint16_t)min((int)n, MAX_PAGES);
 
-  f.write((const uint8_t*)&magic, sizeof(magic));
+  f.write((const uint8_t*)&magic,         sizeof(magic));
   f.write((const uint8_t*)&layoutVersion, sizeof(layoutVersion));
-  f.write((const uint8_t*)&size32, sizeof(size32));
-  f.write((const uint8_t*)&count16, sizeof(count16));
-  f.write((const uint8_t*)in.offsets, count16 * sizeof(uint32_t));
+  f.write((const uint8_t*)&size32,        sizeof(size32));
+  f.write((const uint8_t*)&count16,       sizeof(count16));
+  f.write((const uint8_t*)offsets,        count16 * sizeof(uint32_t));
   f.close();
+}
+
+void savePageOffsetCacheForBook(const String& path, size_t fileSize,
+                                const PageCacheLayout& layout,
+                                const PageOffsetTable& in) {
+  // count <= 1 is a degenerate "just the seed entry" — nothing useful to
+  // persist (rebuilds trivially on next open).
+  if (in.count <= 1) return;
+  writeFreshCache(path, fileSize, layout, in.offsets, (uint16_t)in.count);
+}
+
+bool appendPagesToCache(const String& path, size_t fileSize,
+                        const PageCacheLayout& layout,
+                        uint16_t currentCount,
+                        const uint32_t* newOffsets, uint16_t n) {
+  if (n == 0) return true;
+  if ((size_t)currentCount + (size_t)n > MAX_PAGES) return false;
+
+  File f;
+  uint16_t storedCount = 0;
+  if (!openAndValidateCache(path, "r+", fileSize, layout, f, storedCount)) return false;
+  if (storedCount != currentCount) { f.close(); return false; }
+
+  // Append the new offsets at the end of the file.
+  size_t appendPos = kHeaderBytes + (size_t)currentCount * sizeof(uint32_t);
+  if (!f.seek(appendPos))                                                       { f.close(); return false; }
+  if (f.write((const uint8_t*)newOffsets, n * sizeof(uint32_t)) != n * sizeof(uint32_t)) {
+    f.close();
+    return false;
+  }
+
+  // Update count LAST so any concurrent reader (or a power-loss replay)
+  // either sees the pre-append state (old count, old offsets) or the
+  // fully-appended state (new count, new offsets) — never something in
+  // between. LittleFS's flush is what makes that atomic for other handles.
+  uint16_t newCount = (uint16_t)(currentCount + n);
+  size_t countPos = sizeof(uint32_t) * 3;  // past magic, layoutVersion, fileSize
+  if (!f.seek(countPos))                                                          { f.close(); return false; }
+  if (f.write((const uint8_t*)&newCount, sizeof(newCount)) != sizeof(newCount))   { f.close(); return false; }
+  f.flush();
+  f.close();
+  return true;
 }
 
 int loadOffsetForPageFromDisk(const String& path, size_t expectedSize,
@@ -135,7 +206,7 @@ int loadOffsetForPageFromDisk(const String& path, size_t expectedSize,
 
   File f;
   uint16_t count = 0;
-  if (!openAndValidateCache(path, expectedSize, layout, f, count)) return -1;
+  if (!openAndValidateCache(path, "r", expectedSize, layout, f, count)) return -1;
 
   int targetPage = (maxPage >= (int)count) ? (int)count - 1 : maxPage;
   size_t entryPos = kHeaderBytes + (size_t)targetPage * sizeof(uint32_t);
@@ -147,6 +218,27 @@ int loadOffsetForPageFromDisk(const String& path, size_t expectedSize,
 
   *out = off;
   return targetPage;
+}
+
+bool readCacheProgress(const String& path, const PageCacheLayout& layout,
+                       uint16_t* outCount, uint32_t* outLastOffset,
+                       uint32_t* outStoredFileSize) {
+  File f;
+  uint32_t storedFileSize = 0;
+  uint16_t count = 0;
+  if (!openCacheAndReadHeader(path, "r", layout, f, storedFileSize, count)) return false;
+
+  // Seek to the last offset entry and read it.
+  size_t entryPos = kHeaderBytes + (size_t)(count - 1) * sizeof(uint32_t);
+  if (!f.seek(entryPos)) { f.close(); return false; }
+  uint32_t off = 0;
+  if (f.read((uint8_t*)&off, sizeof(off)) != sizeof(off)) { f.close(); return false; }
+  f.close();
+
+  *outCount          = count;
+  *outLastOffset     = off;
+  *outStoredFileSize = storedFileSize;
+  return true;
 }
 
 void deletePageCacheForBook(const String& path) {
