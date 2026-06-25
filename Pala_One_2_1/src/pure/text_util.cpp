@@ -84,7 +84,14 @@ String normalizeTypography(const String& in) {
       if (b1 == 0x80) {
         if (b2 == 0x98 || b2 == 0x99 || b2 == 0x9A || b2 == 0x9B) { out += '\''; i += 3; continue; }
         if (b2 == 0x9C || b2 == 0x9D || b2 == 0x9E || b2 == 0x9F || b2 == 0xB9 || b2 == 0xBA) { out += '"'; i += 3; continue; }
-        if (b2 == 0x93 || b2 == 0x94 || b2 == 0x95) { out += '-'; i += 3; continue; }
+        // En-dash (U+2013) stays a tight hyphen so number/date ranges
+        // (e.g. 1914-1918) read correctly. Em-dash (U+2014) and horizontal
+        // bar (U+2015) become a spaced hyphen: the reader fonts have no glyph
+        // for these dashes, and a bare hyphen renders too thin and reads like
+        // a hyphenated word ("passing-they"). compactText() later collapses
+        // any doubled spaces if the source already padded the dash.
+        if (b2 == 0x93) { out += '-'; i += 3; continue; }
+        if (b2 == 0x94 || b2 == 0x95) { out += " - "; i += 3; continue; }
         if (b2 == 0xA6) { out += "..."; i += 3; continue; }
       }
     }

@@ -49,11 +49,17 @@ TEST_CASE("normalizeTypography converts smart double quotes") {
   CHECK_EQ(normalizeTypography(s), String("\"hi\""));
 }
 
-TEST_CASE("normalizeTypography converts em/en dashes to '-'") {
-  // U+2013 en-dash = 0xE2 0x80 0x93, U+2014 em-dash = 0xE2 0x80 0x94
-  char in[] = {'a', (char)0xE2, (char)0x80, (char)0x94, 'b', 0};
-  String s(in);
-  CHECK_EQ(normalizeTypography(s), String("a-b"));
+TEST_CASE("normalizeTypography: en-dash stays tight, em-dash gets spaces") {
+  // U+2013 en-dash = 0xE2 0x80 0x93 -> tight hyphen so ranges read right
+  char en[] = {'1', (char)0xE2, (char)0x80, (char)0x93, '9', 0};
+  CHECK_EQ(normalizeTypography(String(en)), String("1-9"));
+  // U+2014 em-dash = 0xE2 0x80 0x94 -> spaced hyphen (font has no em-dash
+  // glyph; a bare hyphen reads like a hyphenated word)
+  char em[] = {'a', (char)0xE2, (char)0x80, (char)0x94, 'b', 0};
+  CHECK_EQ(normalizeTypography(String(em)), String("a - b"));
+  // U+2015 horizontal bar = 0xE2 0x80 0x95 -> spaced hyphen too
+  char bar[] = {'a', (char)0xE2, (char)0x80, (char)0x95, 'b', 0};
+  CHECK_EQ(normalizeTypography(String(bar)), String("a - b"));
 }
 
 TEST_CASE("normalizeTypography converts ellipsis to ...") {
