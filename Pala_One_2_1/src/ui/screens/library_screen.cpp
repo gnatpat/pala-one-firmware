@@ -11,6 +11,7 @@
 #include "src/ui/screens/about_screen.h"
 #include "src/ui/screens/apps_screen.h"
 #include "src/ui/screens/update_screen.h"
+#include "src/ui/screens/book_loading_screen.h"
 #include "src/ui/screens/bookmarks/book_select_screen.h"
 #include "src/ui/screens/bookmarks/session.h"
 #include "src/ui/screens/list_screen.h"
@@ -221,7 +222,14 @@ void LibraryScreen::onButton(const ButtonEvent& e) {
   }
 
   if (sel.type == LIB_ENTRY_BOOK) {
-    if (openBookByIndex(sel.ref)) {
+    // If the on-disk page cache isn't yet caught up to the user's saved
+    // byte (typically: layout changed since the cache was last built),
+    // route through the loading screen so the user sees progress instead
+    // of a frozen device. Otherwise open directly — fast cache path.
+    if (BookLoadingScreen::isNeededFor(sel.ref)) {
+      g_bookLoadingScreen.bookIdx = sel.ref;
+      nextScreen = &g_bookLoadingScreen;
+    } else if (openBookByIndex(sel.ref)) {
       nextScreen = &g_readerScreen;
     } else {
       drawCenter(D_LIBRARY_OPEN_FAILED, D_LIBRARY_TRY_UPLOAD);
